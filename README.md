@@ -1,7 +1,5 @@
 # MIPS 5-Stage (RISC CPU) 파이프라인 시뮬레이션 2018.08
 
-[https://github.com/haewoniee/MIPS_5_Pipeline](https://github.com/haewoniee/MIPS_5_Pipeline)
-
 시스템 구조론 수업에서 MIPS 5-스테이지 파이프라인 시뮬레이터를 구현하였습니다.
 
 ---
