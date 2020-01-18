@@ -2,6 +2,12 @@
 
 시스템 구조론 수업에서 MIPS 5-스테이지 파이프라인 시뮬레이터를 구현하였습니다.
 
+    Usage:
+        $ make
+        $ ./asm input.s input.out #어셈블리를 기계언어로 번역
+        $ ./sim input.out > input_s.output #파이프라인 없는 버전으로 input명령들 수행
+        $ ./sim-pipe input.out > input_m.output #파이프라이닝 버전으로 input명령들 수행
+
 ---
 
 ## <프로젝트 개요>
