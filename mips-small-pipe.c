@@ -1,5 +1,6 @@
 /*
  *     $Author: yeung $
+ *     $Modifier: Haewon Han 
  */
 
 #include <stdio.h>
@@ -71,37 +72,424 @@ run(Pstate state)
   int readRegA;
   int readRegB;
   short i;
+  int haltflag = 0;
 
+  
   memset(&new, 0, sizeof(state_t));
-
+  int temp=0;
   while (1) {
-
     printState(state);
-
     /* copy everything so all we have to do is make changes.
        (this is primarily for the memory and reg arrays) */
     memcpy(&new, state, sizeof(state_t));
+    /* --------------------- IF state --------------------- */
+    // Fetch Instruction
+    // if not branch inst, increment pcPlus1
+    i = new.pc;
+ 
+    new.IFID.instr = new.instrMem[i >> 2];
 
-    new.cycles++;
+    //increase pc by 4 already
+    new.pc += 4;
+    new.IFID.pcPlus1 = new.pc;
 
-    /* --------------------- IF stage --------------------- */
+    if (opcode(new.IFID.instr) == BEQZ_OP) {
 
-    /* --------------------- ID stage --------------------- */
+      //Test immediate value
+      int im = offset(new.IFID.instr);
+      //if Immediate positive, go on
+      //else if immediate negative, take branch
+      if (im < 0)
+      {
+        new.pc = offset(new.IFID.instr) + new.IFID.pcPlus1;
+      }
+      else
+      {
+        new.pc = new.pc;
+      }
+    }
+    /* --------------------- ID state --------------------- */
+    //If there is a fetched instruction, let's decode it
+    //Read registers and store into IDEX struct
+    new.IDEX.instr = state->IFID.instr;
+    // R type - REG_REG_OP & NOPINSTRUCTION
+    new.IDEX.pcPlus1 = state->IFID.pcPlus1;
+    int src1, src2;
+    src1 = field_r1(new.IDEX.instr);
+    src2 = field_r2(new.IDEX.instr);
+    readRegA = new.reg[src1];
+    readRegB = new.reg[src2];
 
-    /* --------------------- EX stage --------------------- */
+    if (new.IDEX.instr == NOPINSTRUCTION || opcode(new.IDEX.instr) == HALT_OP)
+    {
+        new.IDEX.offset = offset(new.IDEX.instr);
+        src1 = -1;
+        src2 = -1;
+        readRegA = 0;
+        readRegB = 0;
+    }
+    else
+    {
+      int opc = opcode(new.IDEX.instr);
+      if (opc == REG_REG_OP)
+      {
+        new.IDEX.offset = offset(new.IDEX.instr);
+      }
+      else if (opc == ADDI_OP || opc == BEQZ_OP)
+      {
+        new.IDEX.offset = offset(new.IDEX.instr);
+        src2 = -1;
+      }
+      else if (opc == SW_OP)
+      {
+        new.IDEX.offset = offset(new.IDEX.instr);
+      }
+      else if (opc == LW_OP)
+      {
+        new.IDEX.offset = offset(new.IDEX.instr);
+        src2 = -1;
+      }
+      else if (opc == HALT_OP)
+      {
+        //new.IDEX.offset = 0;
+        src1 = -1;
+        src2 = -1;
+      }
+    }
+    new.IDEX.readRegA = readRegA;
+    new.IDEX.readRegB = readRegB;
 
-    /* --------------------- MEM stage --------------------- */
+    //TODO! DEPENDENCY CHECK. IF DEPENDENT, BUBBLE IT
+    if (opcode(state->IDEX.instr) == LW_OP)
+    {
+      if (src1 == field_r2(state->IDEX.instr) || src2 == field_r2(state->IDEX.instr))
+      {
+        //Bubbling
+        new.IDEX.instr = NOPINSTRUCTION;
+        new.IDEX.readRegA = 0;
+        new.IDEX.readRegB = 0;
+        new.IDEX.pcPlus1 = 0;
+        new.IDEX.offset = offset(new.IDEX.instr);
+        //replacing the prev one
+        new.IFID.instr = state->IFID.instr;
+        new.IFID.pcPlus1 = state->IFID.pcPlus1;
+        new.pc -= 4;
+      }
+    }
 
-    /* --------------------- WB stage --------------------- */
+    /* --------------------- EX state --------------------- */
+    // if there is a decoded instruction, let's execute it
+    new.EXMEM.instr = state->IDEX.instr;
 
-    /* --------------------- end stage --------------------- */
+    // I type
+    if (new.EXMEM.instr == NOPINSTRUCTION || opcode(new.EXMEM.instr) == HALT_OP)
+    {
+      new.EXMEM.aluResult = 0;
+      new.EXMEM.readRegB = 0;
+    }
+    else
+    {
+      int opc = opcode(new.EXMEM.instr);
+      if (opc == LW_OP )
+      {
+        // if there is dependency of the base reg, then read it from pipeline
+        int val = check_dependency(field_r1(state->IDEX.instr),2,state);
+        if (val != -1)
+          //dependent case
+        {
+          new.EXMEM.aluResult = val + state->IDEX.offset;
+        }
+        else
+          //independent case
+        {
+          new.EXMEM.aluResult = new.reg[field_r1(state->IDEX.instr)] + state->IDEX.offset;
+        }
 
-    /* transfer new state into current state */
+        new.EXMEM.readRegB = new.reg[field_r2(new.EXMEM.instr)];
+      }
+      else if (opc == SW_OP)
+      {
+        int val_toStore = check_dependency(field_r2(state->IDEX.instr),2,state);
+        if (val_toStore != -1)
+          //dependent case
+        {
+          new.EXMEM.readRegB = val_toStore;
+        }
+        else
+          //independent case
+        {
+          new.EXMEM.readRegB = new.reg[field_r2(new.EXMEM.instr)];
+        }
+
+        int val_reg = check_dependency(field_r1(state->IDEX.instr),2,state);
+        if (val_reg != -1)
+          //dependent case
+        {
+          new.EXMEM.aluResult = val_reg + offset(new.EXMEM.instr);
+        }
+        else
+          //independent case
+        {
+          new.EXMEM.aluResult = new.reg[field_r1(new.EXMEM.instr)] + offset(new.EXMEM.instr);
+        }
+
+      }
+      else if (opc == ADDI_OP)
+      {
+        int val = check_dependency(field_r1(state->IDEX.instr),2,state);
+        if (val != -1)
+          //dependent case
+        {
+          new.EXMEM.aluResult = val + state->IDEX.offset;
+          new.EXMEM.readRegB = new.reg[field_r2(new.EXMEM.instr)];
+        }
+        else
+          //independent case
+        {
+          new.EXMEM.aluResult = new.reg[field_r1(state->IDEX.instr)] + state->IDEX.offset;
+          new.EXMEM.readRegB = new.reg[field_r2(new.EXMEM.instr)];
+        }
+
+      }
+      else if (opc == BEQZ_OP)
+      {
+        int branchFlag = 1; //correct;
+        //Calculate the actual target address
+        new.EXMEM.readRegB = 0;
+        int val = check_dependency(field_r1(state->IDEX.instr),2,state);
+        if (val == -1)
+          //dependent
+        {
+          val = new.reg[field_r1(state->IDEX.instr)];
+        }
+
+        new.EXMEM.aluResult = state->IDEX.pcPlus1 + state->IDEX.offset; 
+
+        if (val == 0)
+        {
+
+          //incorrect case1: offset positive & predicted NT
+          if (state->IDEX.offset > 0)
+          {
+            branchFlag = 0;
+          }
+        }
+        else if (val != 0)
+        {
+          //incorrect case2: offset negative & predicted T
+          if (state->IDEX.offset < 0)
+          {
+            branchFlag = 0;
+          }
+        }
+
+        //Misprediction case
+        if (branchFlag == 0)
+        {
+          //point to the target address
+          new.pc = new.EXMEM.aluResult;
+
+          //void prev instructions fetched
+          new.IDEX.instr = NOPINSTRUCTION;
+          new.IDEX.readRegA = 0;
+          new.IDEX.readRegB = 0;
+          new.IDEX.pcPlus1 = 0;
+          new.IDEX.offset = offset(new.IDEX.instr);
+          //replacing the prev one
+          new.IFID.instr = NOPINSTRUCTION;
+          new.IFID.pcPlus1 = 0;
+        }
+        
+
+      }
+      else if (opc == REG_REG_OP)
+      {
+        int val1 = check_dependency(field_r1(state->IDEX.instr),2,state);
+        int val2 = check_dependency(field_r2(state->IDEX.instr),2,state);
+        if (val1 == -1)
+        {
+          int inst1 = field_r1(new.EXMEM.instr);
+          val1 = new.reg[field_r1(new.EXMEM.instr)];
+        }
+        if (val2 == -1)
+        {
+          int inst2 = field_r2(new.EXMEM.instr);
+          val2 = new.reg[field_r2(new.EXMEM.instr)];
+        }
+        
+        new.EXMEM.readRegB = val2;
+
+        int f = func(state->IDEX.instr);
+        if (f == ADD_FUNC) {
+            new.EXMEM.aluResult = val1 + val2;
+        } else if (f == SLL_FUNC) {
+           new.EXMEM.aluResult = val1 << val2;
+        } else if (f == SRL_FUNC) {
+            new.EXMEM.aluResult = ( (unsigned int) val1) >> val2;
+        } else if (f == SUB_FUNC) {
+            new.EXMEM.aluResult = val1 - val2;
+        } else if (f == AND_FUNC) {
+            new.EXMEM.aluResult = val1 & val2;
+        } else if (f == OR_FUNC) {
+            new.EXMEM.aluResult = val1 | val2;
+        }
+      }
+    }
+
+    /* --------------------- MEM state --------------------- */
+    //if there is an executed instruction, let's run mem state
+    new.MEMWB.instr = state->EXMEM.instr;
+    if (new.MEMWB.instr == NOPINSTRUCTION)
+    {
+      new.MEMWB.writeData = 0;
+    }
+    else
+    {
+      int opc = opcode(new.MEMWB.instr);
+      if (opc == HALT_OP)
+      {
+        new.MEMWB.writeData = 0;
+        haltflag = 1;
+      }
+      else if (opc == LW_OP || opc == SW_OP)
+      {
+        if (opc == SW_OP)
+        {
+          new.dataMem[(state->EXMEM.aluResult >> 2)] = state->EXMEM.readRegB;
+          new.MEMWB.writeData = state->EXMEM.readRegB;
+        }
+        else
+        {
+          new.MEMWB.writeData = new.dataMem[state->EXMEM.aluResult >> 2];
+        }
+      }
+      else
+      {
+        new.MEMWB.writeData = state->EXMEM.aluResult;
+      }
+    }
+
+
+    /* --------------------- WB state ---------------------- */
+    //if there is an MEM instruction, let's run WB state
+    new.WBEND.instr = state->MEMWB.instr;
+    new.WBEND.writeData = state->MEMWB.writeData;
+    if (new.WBEND.instr == NOPINSTRUCTION)
+    {
+      new.WBEND.writeData = 0;
+    }
+    else
+    {
+      int opc = opcode(new.WBEND.instr);
+      if (opc == LW_OP || opc == ADDI_OP)
+      {
+        new.reg[field_r2(new.WBEND.instr)] = state->MEMWB.writeData;
+        new.WBEND.writeData = state->MEMWB.writeData;
+      }
+      else if (opc == REG_REG_OP)
+      {
+        new.reg[field_r3(new.WBEND.instr)] = state->MEMWB.writeData;
+        new.WBEND.writeData = state->MEMWB.writeData;
+      }
+    }
+
+    /* --------------------- end state --------------------- */
+    //increment cycle
+    new.cycles += 1;
     memcpy(state, &new, sizeof(state_t));
 
+    if (haltflag == 1)
+    {
+      printState(state);
+      printf("machine halted\n");
+      printf("total of %d cycles executed\n", state->cycles);
+      exit(0);
+    }
+
+    temp += 1;
+    /* transfer new state into current state */
   }
 }
+
 /************************************************************/
+
+int
+check_dependency(int srcReg, int stageNum, Pstate state)
+{
+  int dest = -1;
+  if (stageNum == 2)
+  {
+    //Request from EX Stage - need to check EXMEM stage
+    if (state->EXMEM.instr == NOPINSTRUCTION)
+    {
+      dest = -1;
+    }
+    else
+    {
+      if (opcode(state->EXMEM.instr) == ADDI_OP || opcode(state->EXMEM.instr) == LW_OP)
+      {
+        dest = field_r2(state->EXMEM.instr);
+      }
+      else if (opcode(state->EXMEM.instr) == REG_REG_OP)
+      {
+        dest = field_r3(state->EXMEM.instr);
+      }
+    }
+    if (dest == srcReg)
+    {
+        return state->EXMEM.aluResult;
+    }
+
+
+    //Request from EX Stage - need to check MEMWB stage
+    if (state->MEMWB.instr == NOPINSTRUCTION)
+    {
+      dest = -1;
+    }
+    else
+    {
+      if (opcode(state->MEMWB.instr) == ADDI_OP || opcode(state->MEMWB.instr) == LW_OP)
+      {
+        dest = field_r2(state->MEMWB.instr);
+      }
+      else if (opcode(state->MEMWB.instr) == REG_REG_OP)
+      {
+        dest = field_r3(state->MEMWB.instr);
+      }
+    }
+    if (dest == srcReg)
+    {
+      return state->MEMWB.writeData;
+    }
+
+
+    //Request from EX Stage - need to check WBEND stage
+    if (state->WBEND.instr == NOPINSTRUCTION)
+    {
+      dest = -1;
+    }
+    else
+    {
+      if (opcode(state->WBEND.instr) == ADDI_OP || opcode(state->WBEND.instr) == LW_OP)
+      {
+        dest = field_r2(state->WBEND.instr);
+      }
+      else if (opcode(state->WBEND.instr) == REG_REG_OP)
+      {
+        dest = field_r3(state->WBEND.instr);
+      }
+    }
+    if (dest == srcReg)
+    {
+      return state->WBEND.writeData;
+    }    else 
+    {
+      dest = -1;
+    }
+
+  }
+  return dest;
+}
 
 /************************************************************/
 int
